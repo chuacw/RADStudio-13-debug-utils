@@ -198,48 +198,48 @@ def _is_branch_or_call_kind(controlFlowKind):
     )
     return kind
 
-def _is_branch_or_call_mnemonic(mnemonic, arch):
-    m = mnemonic.lower()
-
-    x86_br = {
-        "call",
-        "jmp",
-        "ja", "jae", "jb", "jbe", "jc", "jcxz",
-        "je", "jz", "jne", "jnz",
-        "jg", "jge", "jl", "jle",
-        "jo", "jno", "js", "jns",
-        "jp", "jpe", "jnp", "jpo",
-        "jrcxz",
-    }
-
-    arm_br = {
-        "b", "bl", "bx", "blx",
-        "cbz", "cbnz", "tbz", "tbnz",
-        "beq", "bne", "bhs", "bcs", "blo", "bcc",
-        "bmi", "bpl", "bvs", "bvc",
-        "bhi", "bls", "bge", "blt", "bgt", "ble",
-        "braa", "brab", "blraa", "blrab",
-    }
-
-    rv_br = {
-        "jal", "jalr", "beq", "bne", "blt", "bge", "bltu", "bgeu",
-    }
-
-    if arch in ARCH_X86:
-        # Normalize x86 mnemonics: GetMnemonic() often returns AT&T suffixes (callq, jmpl)
-        # even if the flavor is Intel.
-        if m in ("calll", "callq"):
-            m = "call"
-        elif m in ("jmpl", "jmpq"):
-            m = "jmp"
-        return m in x86_br
-    elif arch in ARCH_ARM:
-        return m in arm_br
-    elif arch in ARCH_ARM64:
-        return m in arm_br
-    else:
-        return m in x86_br or m in arm_br or m in rv_br
-
+# def _is_branch_or_call_mnemonic(mnemonic, arch):
+#     m = mnemonic.lower()
+#
+#     x86_br = {
+#         "call",
+#         "jmp",
+#         "ja", "jae", "jb", "jbe", "jc", "jcxz",
+#         "je", "jz", "jne", "jnz",
+#         "jg", "jge", "jl", "jle",
+#         "jo", "jno", "js", "jns",
+#         "jp", "jpe", "jnp", "jpo",
+#         "jrcxz",
+#     }
+#
+#     arm_br = {
+#         "b", "bl", "bx", "blx",
+#         "cbz", "cbnz", "tbz", "tbnz",
+#         "beq", "bne", "bhs", "bcs", "blo", "bcc",
+#         "bmi", "bpl", "bvs", "bvc",
+#         "bhi", "bls", "bge", "blt", "bgt", "ble",
+#         "braa", "brab", "blraa", "blrab",
+#     }
+#
+#     rv_br = {
+#         "jal", "jalr", "beq", "bne", "blt", "bge", "bltu", "bgeu",
+#     }
+#
+#     if arch in ARCH_X86:
+#         # Normalize x86 mnemonics: GetMnemonic() often returns AT&T suffixes (callq, jmpl)
+#         # even if the flavor is Intel.
+#         if m in ("calll", "callq"):
+#             m = "call"
+#         elif m in ("jmpl", "jmpq"):
+#             m = "jmp"
+#         return m in x86_br
+#     elif arch in ARCH_ARM:
+#         return m in arm_br
+#     elif arch in ARCH_ARM64:
+#         return m in arm_br
+#     else:
+#         return m in x86_br or m in arm_br or m in rv_br
+#
 
 def is_branch_or_call_at_addr(target, addr_load, flavor, frame=None, result_out=None):
     """
