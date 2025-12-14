@@ -45,72 +45,72 @@ def is_int_literal(s: str) -> bool:
     except ValueError:
         return False
 
-def x86_cond_jump_target_from_inst(target: lldb.SBTarget,
-                                  inst: lldb.SBInstruction,
-                                  *,
-                                  prefer_file_addr: bool = False) -> int:
-    """
-    If `inst` is an x86 conditional jump (Jcc), return its resolved target address.
-    Computes the target from the instruction bytes (rel8/rel32), not from GetOperands().
-
-    Args:
-        target: SBTarget (needed for address resolution / memory reads).
-        inst: SBInstruction to analyze.
-        prefer_file_addr: If True, compute using file addresses (SBAddress.GetFileAddress()).
-                          Otherwise compute using load addresses (SBAddress.GetLoadAddress()).
-
-    Returns:
-        int target address, or None if not a conditional jump or cannot decode.
-    """
-    if not target or not target.IsValid() or not inst or not inst.IsValid():
-        return None
-
-    # Fast gate: LLDB already classifies cond jumps for most targets.
-    if inst.GetControlFlowKind(target) != lldb.eInstructionControlFlowKindCondJump:
-        return None
-
-    addr = inst.GetAddress()
-    if not addr or not addr.IsValid():
-        return None
-
-    pc = addr.GetFileAddress() if prefer_file_addr else addr.GetLoadAddress(target)
-    if pc in (None, lldb.LLDB_INVALID_ADDRESS):
-        return None
-
-    # Read enough bytes to cover both encodings:
-    #  - short Jcc: 2 bytes
-    #  - near  Jcc: 6 bytes (0F 8x + imm32)
-    err = lldb.SBError()
-    insn_bytes = target.ReadMemory(addr, 6, err)
-    if not err.Success() or not insn_bytes:
-        return None
-
-    # Ensure we can index bytes (ReadMemory returns a Python bytes/bytearray on most builds)
-    b = insn_bytes if isinstance(insn_bytes, (bytes, bytearray)) else bytes(insn_bytes)
-
-    op0 = b[0]
-
-    # short Jcc rel8: 70..7F  (je=74, jne=75, etc.)
-    if 0x70 <= op0 <= 0x7F:
-        if len(b) < 2:
-            return None
-        disp = int.from_bytes(b[1:2], byteorder="little", signed=True)
-        insn_len = 2
-        return pc + insn_len + disp
-
-    # near Jcc rel32: 0F 80..8F
-    if op0 == 0x0F:
-        if len(b) < 6:
-            return None
-        op1 = b[1]
-        if 0x80 <= op1 <= 0x8F:
-            disp = int.from_bytes(b[2:6], byteorder="little", signed=True)
-            insn_len = 6
-            return pc + insn_len + disp
-
-    # Some other conditional form or we couldn't decode it here.
-    return None
-
+# def x86_cond_jump_target_from_inst(target: lldb.SBTarget,
+#                                   inst: lldb.SBInstruction,
+#                                   *,
+#                                   prefer_file_addr: bool = False) -> int:
+#     """
+#     If `inst` is an x86 conditional jump (Jcc), return its resolved target address.
+#     Computes the target from the instruction bytes (rel8/rel32), not from GetOperands().
+#
+#     Args:
+#         target: SBTarget (needed for address resolution / memory reads).
+#         inst: SBInstruction to analyze.
+#         prefer_file_addr: If True, compute using file addresses (SBAddress.GetFileAddress()).
+#                           Otherwise compute using load addresses (SBAddress.GetLoadAddress()).
+#
+#     Returns:
+#         int target address, or None if not a conditional jump or cannot decode.
+#     """
+#     if not target or not target.IsValid() or not inst or not inst.IsValid():
+#         return None
+#
+#     # Fast gate: LLDB already classifies cond jumps for most targets.
+#     if inst.GetControlFlowKind(target) != lldb.eInstructionControlFlowKindCondJump:
+#         return None
+#
+#     addr = inst.GetAddress()
+#     if not addr or not addr.IsValid():
+#         return None
+#
+#     pc = addr.GetFileAddress() if prefer_file_addr else addr.GetLoadAddress(target)
+#     if pc in (None, lldb.LLDB_INVALID_ADDRESS):
+#         return None
+#
+#     # Read enough bytes to cover both encodings:
+#     #  - short Jcc: 2 bytes
+#     #  - near  Jcc: 6 bytes (0F 8x + imm32)
+#     err = lldb.SBError()
+#     insn_bytes = target.ReadMemory(addr, 6, err)
+#     if not err.Success() or not insn_bytes:
+#         return None
+#
+#     # Ensure we can index bytes (ReadMemory returns a Python bytes/bytearray on most builds)
+#     b = insn_bytes if isinstance(insn_bytes, (bytes, bytearray)) else bytes(insn_bytes)
+#
+#     op0 = b[0]
+#
+#     # short Jcc rel8: 70..7F  (je=74, jne=75, etc.)
+#     if 0x70 <= op0 <= 0x7F:
+#         if len(b) < 2:
+#             return None
+#         disp = int.from_bytes(b[1:2], byteorder="little", signed=True)
+#         insn_len = 2
+#         return pc + insn_len + disp
+#
+#     # near Jcc rel32: 0F 80..8F
+#     if op0 == 0x0F:
+#         if len(b) < 6:
+#             return None
+#         op1 = b[1]
+#         if 0x80 <= op1 <= 0x8F:
+#             disp = int.from_bytes(b[2:6], byteorder="little", signed=True)
+#             insn_len = 6
+#             return pc + insn_len + disp
+#
+#     # Some other conditional form or we couldn't decode it here.
+#     return None
+#
 def cmd_get_operands(debugger, command, exe_ctx, result, internal_dict):
     global debug_mode
     target = exe_ctx.target
@@ -241,7 +241,7 @@ def _is_branch_or_call_mnemonic(mnemonic, arch):
         return m in x86_br or m in arm_br or m in rv_br
 
 
-def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
+def is_branch_or_call_at_addr(target, addr_load, flavor, frame=None, result_out=None):
     """
     Given an lldb.SBTarget and a load address (integer),
     return (is_branch_or_call, target_addr_or_None).
@@ -254,6 +254,7 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
     """
     if debug_mode and result_out:
         result_out.PutCString("DEBUG: is_branch_or_call_at_addr checking 0x%x" % addr_load)
+        result_out.PutCString("Disassembly flavor: %s" % flavor)
 
     if not target or not target.IsValid():
         return (False, None)
@@ -266,7 +267,7 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
     # sb_addr = target.ResolveLoadAddress(addr_load)
     sb_addr = target.ResolveFileAddress(addr_load)
     if debug_mode and result_out:
-        result_out.PutCString("DEBUG: is_branch_or_call_at_addr sb_addr 0x%s" % str(sb_addr))
+        result_out.PutCString("DEBUG: is_branch_or_call_at_addr sb_addr %s" % str(sb_addr))
     if not sb_addr or not sb_addr.IsValid():
         return (False, None)
 
@@ -318,7 +319,10 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
     # ARM/ARM64 "r3", "x4", etc.)
     op_full = operands_str
     cand = tokens[0].split(";")[0].strip()
-	
+    if debug_mode and result_out:
+        result_out.PutCString("op_full: %s" % op_full)
+        result_out.PutCString("cand: %s" % cand)
+
     target_addr = None
 
     if debug_mode and result_out:
@@ -473,7 +477,7 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
             target_addr_size = target.GetAddressByteSize() # 32-bit vs 64-bit
             sb_mem_addr = target.ResolveLoadAddress(ptr_addr)
             if debug_mode and result_out:
-                result_out.PutCString("DEBUG: Indirect, sb_mem_addr: %s" % str(sb_mem_addr))
+                result_out.PutCString("DEBUG: Indirect, sb_mem_addr: 0x%x" % sb_mem_addr.GetLoadAddress(target))
             # target_bytes = target.ReadMemory(target.ResolveLoadAddress(ptr_addr), target_addr_size, err)
             target_bytes = target.ReadMemory(sb_mem_addr, target_addr_size, err)
             if debug_mode and result_out:
@@ -506,6 +510,7 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
 			
     # --- 3) Symbol name (all archs) ---
     if target_addr is None and not cand.startswith("0x"):
+        # Untested branch
         if debug_mode and result_out:
             result_out.PutCString("Handling case 3)")
         syms = target.FindSymbols(cand)
@@ -518,7 +523,7 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
 
     # --- 4) Simple PC-relative handling ---
     # This appears to be handled under Case 2) already...
-    if target_addr is None and controlFlowKind == lldb.eInstructionControlFlowKindCondJump:
+    if target_addr is None:
         if debug_mode and result_out:
             result_out.PutCString("Handling case 4)")
         inst_addr = inst.GetAddress()
@@ -583,7 +588,7 @@ def cmd_is_branch_or_call(debugger, command, exe_ctx, result, internal_dict):
         result.PutCString("Frame valid: %s" % frame.IsValid())
         result.PutCString("Target: %s" % str(target))
 
-    is_br, tgt = is_branch_or_call_at_addr(target, addr, frame, result)
+    is_br, tgt = is_branch_or_call_at_addr(target, addr, current_flavor, frame, result)
 
     if debug_mode:
         result.PutCString("Raw result: is_branch=%s, target=%s" % (is_br, hex(tgt) if tgt else "None"))
