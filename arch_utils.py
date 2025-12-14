@@ -111,42 +111,42 @@ def is_int_literal(s: str) -> bool:
 #     # Some other conditional form or we couldn't decode it here.
 #     return None
 #
-def cmd_get_operands(debugger, command, exe_ctx, result, internal_dict):
-    global debug_mode
-    target = exe_ctx.target
-    frame = exe_ctx.frame
-    if not target or not target.IsValid():
-        result.PutCString("No valid target.")
-        return
-
-    cmd = command.strip()
-    if not cmd:
-        result.PutCString("Usage: get_operands <address>")
-        return
-    cmd_args = command.strip().split()
-    if len(cmd_args) < 1:
-        result.PutCString("Usage: get_operands <address> [debug]")
-        return
-    debug_mode = len(cmd_args) > 1 and cmd_args[1] == "debug"
-
-    addr = int(cmd_args[0], 0)
-    sb_addr = target.ResolveFileAddress(addr)
-    # Read raw bytes from memory; this returns a Python bytes object on your build
-    err = lldb.SBError()
-    buf = target.ReadMemory(sb_addr, 32, err)  # 32 bytes is enough for one instruction
-
-    inst_list = target.GetInstructions(sb_addr, buf)
-    if inst_list.GetSize() == 0:
-        return
-
-    inst = inst_list.GetInstructionAtIndex(0)
-    if debug_mode:
-        result.PutCString("DEBUG: cmd_get_operands inst: %s" % inst)
-    if not inst or not inst.IsValid():
-        return
-
-    operands_str = inst.GetOperands(target)
-    result.PutCString("cmd_get_operands Operands: %s" % operands_str)
+# def cmd_get_operands(debugger, command, exe_ctx, result, internal_dict):
+#     global debug_mode
+#     target = exe_ctx.target
+#     frame = exe_ctx.frame
+#     if not target or not target.IsValid():
+#         result.PutCString("No valid target.")
+#         return
+#
+#     cmd = command.strip()
+#     if not cmd:
+#         result.PutCString("Usage: get_operands <address>")
+#         return
+#     cmd_args = command.strip().split()
+#     if len(cmd_args) < 1:
+#         result.PutCString("Usage: get_operands <address> [debug]")
+#         return
+#     debug_mode = len(cmd_args) > 1 and cmd_args[1] == "debug"
+#
+#     addr = int(cmd_args[0], 0)
+#     sb_addr = target.ResolveFileAddress(addr)
+#     # Read raw bytes from memory; this returns a Python bytes object on your build
+#     err = lldb.SBError()
+#     buf = target.ReadMemory(sb_addr, 32, err)  # 32 bytes is enough for one instruction
+#
+#     inst_list = target.GetInstructions(sb_addr, buf)
+#     if inst_list.GetSize() == 0:
+#         return
+#
+#     inst = inst_list.GetInstructionAtIndex(0)
+#     if debug_mode:
+#         result.PutCString("DEBUG: cmd_get_operands inst: %s" % inst)
+#     if not inst or not inst.IsValid():
+#         return
+#
+#     operands_str = inst.GetOperands(target)
+#     result.PutCString("cmd_get_operands Operands: %s" % operands_str)
 
 def cmd_get_arch_name(debugger, command, exe_ctx, result, internal_dict):
     target = exe_ctx.target
