@@ -521,6 +521,8 @@ def cmd_follow(debugger, command, exe_ctx, result, internal_dict):
         # print(cmd_line)
         # debugger.HandleCommand(cmd_line)
 
+        di_sent = False
+
         ci = debugger.GetCommandInterpreter()
         cmd_line = f"di -s 0x{addr:x} -c 1"
         res = lldb.SBCommandReturnObject()
@@ -529,16 +531,18 @@ def cmd_follow(debugger, command, exe_ctx, result, internal_dict):
         if res.GetOutput():
             result.PutCString(res.GetOutput())
             result.PutCString("Following %s" % hex(tgt))
+            di_sent = True
         if res.GetError():
             result.PutCString("DEBUG: di error: " + res.GetError())
 
         # cmd_line = f"di -s 0x{tgt:x}"
         # print(cmd_line)
         # debugger.HandleCommand(cmd_line)
-        cmd_line = f"di -s 0x{tgt:x}"
-        ci.HandleCommand(cmd_line, res)
-        # result.PutCString(f"DEBUG: ran: {cmd_line}")
-        if res.GetOutput():
-            result.PutCString(res.GetOutput())
-        if res.GetError():
-            result.PutCString("DEBUG: di error: " + res.GetError())
+        if di_sent:
+            cmd_line = f"di -s 0x{tgt:x}"
+            ci.HandleCommand(cmd_line, res)
+            # result.PutCString(f"DEBUG: ran: {cmd_line}")
+            if res.GetOutput():
+                result.PutCString(res.GetOutput())
+            if res.GetError():
+                result.PutCString("DEBUG: di error: " + res.GetError())
