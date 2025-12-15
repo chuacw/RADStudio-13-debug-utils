@@ -1,4 +1,6 @@
-﻿# settings set target.x86-disassembly-flavor intel / default / att
+﻿# A Python LLDB script implementing "follow <addr> [debug]"
+# by CheeWee Chua, 
+# settings set target.x86-disassembly-flavor intel / default / att
 # command script import "C:\\Program Files (x86)\\Embarcadero\\Studio\\37.0\\bin\\windows\\lldb\\arch_utils.py"
 # command script add -f arch_utils.cmd_is_branch_or_call is_branch_or_call
 # command script add -f arch_utils.cmd_get_operands get_operands
@@ -17,6 +19,16 @@ ARCH_X86 = ("i386", "x86", "x86_64", "amd64")
 ARCH_ARM = ("arm", "thumb", "armv7")
 ARCH_ARM64 = ("aarch64", "arm64")
 ARCH_ALL_ARM = ARCH_ARM + ARCH_ARM64
+
+def load_command(debugger, func_name, cmd_name):
+    module_name = __name__
+    cmd_line = f'command script add -f {module_name}.{func_name} {cmd_name} --overwrite'
+    debugger.HandleCommand(cmd_line)
+    print(f'Custom "{cmd_name}" command loaded.')
+
+def __lldb_init_module(debugger, internal_dict):
+    load_command(debugger, "cmd_is_branch_or_call", "is_branch_or_call")
+    load_command(debugger, "cmd_follow", "follow")
 
 def get_x86_flavor(debugger):
     # This returns an SBStructuredData containing the setting info
@@ -390,7 +402,6 @@ def is_branch_or_call_at_addr(target, addr_load, flavor, frame=None, result_out=
             pc = inst_addr.GetLoadAddress(target)
             if arch in ARCH_X86:
                 try:
-                    # target_addr = x86_cond_jump_target_from_inst(target, inst)
                     target_addr = op_full
                     if debug_mode and result_out:
                         result_out.PutCString("target_addr: %s" % hex(target_addr))
@@ -464,3 +475,74 @@ def cmd_is_branch_or_call(debugger, command, exe_ctx, result, internal_dict):
         result.PutCString(
             "Instruction at 0x%x IS a branch/call; target = 0x%x." % (addr, tgt)
         )
+
+def cmd_follow(debugger, command, exe_ctx, result, internal_dict):
+    """
+    Usage:
+      follow <address>
+    """
+    global debug_mode
+    target = exe_ctx.target
+    frame = exe_ctx.frame
+    if not target or not target.IsValid():
+        result.PutCString("No valid target.")
+        return
+
+    cmd = command.strip()
+    if not cmd:
+        result.PutCString("Usage: follow <address>")
+        return
+
+    cmd_args = command.strip().split()
+    if len(cmd_args) < 1:
+        result.PutCString("Usage: follow <address> [debug]")
+        return
+
+    try:
+        addr = int(cmd_args[0], 0)
+    except ValueError:
+        result.PutCString("Invalid address: %s" % cmd_args[0])
+        return
+
+    debug_mode = len(cmd_args) > 1 and cmd_args[1] == "debug"
+    current_flavor = get_x86_flavor(debugger)
+    if debug_mode:
+        result.PutCString("=== DEBUG: Analyzing 0x%x ===" % addr)
+        result.PutCString("Disassembly flavor = %s" % current_flavor)
+        result.PutCString("Arch: %s" % _get_arch_name(target))
+        result.PutCString("Frame valid: %s" % frame.IsValid())
+        result.PutCString("Target: %s" % str(target))
+
+    is_br, tgt = is_branch_or_call_at_addr(target, addr, current_flavor, frame, result)
+    if debug_mode:
+        result.PutCString("DEBUG: is_br=%r (type=%s)" % (is_br, type(is_br).__name__))
+        result.PutCString("DEBUG: tgt=%r (type=%s)" % (tgt, type(tgt).__name__))
+        tgt_str = hex(tgt) if tgt is not None else "None"
+        result.PutCString("Raw result: is_branch=%s, target=%s" % (is_br, tgt_str))
+    if is_br and tgt is not None:
+        # cmd_line = f"di -s 0x{addr:x} -c 1"
+        # print(cmd_line)
+        # debugger.HandleCommand(cmd_line)
+
+        ci = debugger.GetCommandInterpreter()
+        cmd_line = f"di -s 0x{addr:x} -c 1"
+        res = lldb.SBCommandReturnObject()
+        ci.HandleCommand(cmd_line, res)
+        # result.PutCString(f"DEBUG: ran: {cmd_line}")
+        if res.GetOutput():
+            result.PutCString(res.GetOutput())
+            result.PutCString("Following %s" % hex(addr))
+        if res.GetError():
+            result.PutCString("DEBUG: di error: " + res.GetError())
+
+        # cmd_line = f"di -s 0x{tgt:x}"
+        # print(cmd_line)
+        # debugger.HandleCommand(cmd_line)
+        cmd_line = f"di -s 0x{tgt:x}"
+        res = lldb.SBCommandReturnObject()
+        ci.HandleCommand(cmd_line, res)
+        # result.PutCString(f"DEBUG: ran: {cmd_line}")
+        if res.GetOutput():
+            result.PutCString(res.GetOutput())
+        if res.GetError():
+            result.PutCString("DEBUG: di error: " + res.GetError())
