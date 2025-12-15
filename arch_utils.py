@@ -476,7 +476,7 @@ def cmd_is_branch_or_call(debugger, command, exe_ctx, result, internal_dict):
 def cmd_follow(debugger, command, exe_ctx, result, internal_dict):
     """
     Usage:
-      follow <address>
+      follow <address> [debug]
     """
     global debug_mode
     target = exe_ctx.target
@@ -487,7 +487,7 @@ def cmd_follow(debugger, command, exe_ctx, result, internal_dict):
 
     cmd = command.strip()
     if not cmd:
-        result.PutCString("Usage: follow <address>")
+        result.PutCString("Usage: follow <address> [debug]")
         return
 
     cmd_args = command.strip().split()
@@ -528,7 +528,7 @@ def cmd_follow(debugger, command, exe_ctx, result, internal_dict):
         # result.PutCString(f"DEBUG: ran: {cmd_line}")
         if res.GetOutput():
             result.PutCString(res.GetOutput())
-            result.PutCString("Following %s" % hex(addr))
+            result.PutCString("Following %s" % hex(tgt))
         if res.GetError():
             result.PutCString("DEBUG: di error: " + res.GetError())
 
