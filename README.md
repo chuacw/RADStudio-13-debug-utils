@@ -19,8 +19,8 @@ These commands are:
 * follow \<addr\> [debug]
 
 Usage examples:
-* is_branch_or_call 0xd7300f
-* follow 0xd7300f
+* ```is_branch_or_call 0xd7300f```
+* ```follow 0xd7300f```
 
 is_branch_or_call will return a boolean and an address, or a boolean followed by None.
 follow will follow the branch/call instruction at the given address, and disassemble the instruction at the target address that is pointed to by the given address.
