@@ -1,10 +1,7 @@
 ﻿# A Python LLDB script implementing "follow <addr> [debug]"
-# by CheeWee Chua, 
+# by CheeWee Chua, Dec 2025
 # settings set target.x86-disassembly-flavor intel / default / att
 # command script import "C:\\Program Files (x86)\\Embarcadero\\Studio\\37.0\\bin\\windows\\lldb\\arch_utils.py"
-# command script add -f arch_utils.cmd_is_branch_or_call is_branch_or_call
-# command script add -f arch_utils.cmd_get_operands get_operands
-# command script add -f arch_utils.cmd_get_arch_name get_arch_name
 # process launch
 
 # Read 4 bytes (--size), format (--format) x (hex), at address 0xaa214 count (-c) of 1
@@ -152,7 +149,7 @@ def is_branch_or_call_at_addr(target, addr_load, flavor, frame=None, result_out=
     if not inst or not inst.IsValid():
         return (False, None)
 
-    controlFlowKind = inst.GetControlFlowKind(target);
+    controlFlowKind = inst.GetControlFlowKind(target)
     if debug_mode and result_out:
         kind_name_map = {
             lldb.eInstructionControlFlowKindUnknown: "Unknown",
@@ -539,7 +536,6 @@ def cmd_follow(debugger, command, exe_ctx, result, internal_dict):
         # print(cmd_line)
         # debugger.HandleCommand(cmd_line)
         cmd_line = f"di -s 0x{tgt:x}"
-        res = lldb.SBCommandReturnObject()
         ci.HandleCommand(cmd_line, res)
         # result.PutCString(f"DEBUG: ran: {cmd_line}")
         if res.GetOutput():
