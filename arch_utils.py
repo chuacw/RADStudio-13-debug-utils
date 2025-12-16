@@ -3,9 +3,6 @@
 
 # settings set target.x86-disassembly-flavor intel / default / att
 # command script import "C:\\Program Files (x86)\\Embarcadero\\Studio\\37.0\\bin\\windows\\lldb\\arch_utils.py"
-# command script add -f arch_utils.cmd_is_branch_or_call is_branch_or_call
-# command script add -f arch_utils.cmd_get_operands get_operands
-# command script add -f arch_utils.cmd_get_arch_name get_arch_name
 # process launch
 
 # Read 4 bytes (--size), format (--format) x (hex), at address 0xaa214 count (-c) of 1
