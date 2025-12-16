@@ -1,4 +1,7 @@
-﻿# settings set target.x86-disassembly-flavor intel / default / att
+﻿# A Python LLDB script implementing "follow <addr> [debug]"
+# by CheeWee Chua, Dec 2025
+
+# settings set target.x86-disassembly-flavor intel / default / att
 # command script import "C:\\Program Files (x86)\\Embarcadero\\Studio\\37.0\\bin\\windows\\lldb\\arch_utils.py"
 # command script add -f arch_utils.cmd_is_branch_or_call is_branch_or_call
 # command script add -f arch_utils.cmd_get_operands get_operands
@@ -18,6 +21,16 @@ ARCH_ARM = ("arm", "thumb", "armv7")
 ARCH_ARM64 = ("aarch64", "arm64")
 ARCH_ALL_ARM = ARCH_ARM + ARCH_ARM64
 
+def load_command(debugger, func_name, cmd_name):
+    module_name = __name__
+    cmd_line = f'command script add -f {module_name}.{func_name} {cmd_name} --overwrite'
+    debugger.HandleCommand(cmd_line)
+    print(f'Custom "{cmd_name}" command loaded.')
+
+def __lldb_init_module(debugger, internal_dict):
+    load_command(debugger, "cmd_is_branch_or_call", "is_branch_or_call")
+    load_command(debugger, "cmd_follow", "follow")
+
 def get_x86_flavor(debugger):
     # This returns an SBStructuredData containing the setting info
     # But usually, it's easier to just run the command and parse output
@@ -34,7 +47,7 @@ def get_x86_flavor(debugger):
             return output.split(" = ")[-1]
     return "default"  # Fallback
 
-def _get_arch_name(target):
+def get_arch_name(target):
     triple = target.GetTriple()
     return triple.split("-")[0].lower() if triple else ""
 
@@ -150,7 +163,7 @@ def cmd_get_operands(debugger, command, exe_ctx, result, internal_dict):
 
 def cmd_get_arch_name(debugger, command, exe_ctx, result, internal_dict):
     target = exe_ctx.target
-    arch = _get_arch_name(target)
+    arch = get_arch_name(target)
     result.PutCString("Architecture: %s" % arch)
 
 def _resolve_register_value(frame, reg_name, result_out=None):
@@ -189,57 +202,14 @@ def _resolve_register_value(frame, reg_name, result_out=None):
 
     return None
 
-def _is_branch_or_call_kind(controlFlowKind):
-    kind = controlFlowKind in (
+def is_branch_or_call_kind(control_flow_kind):
+    kind = control_flow_kind in (
         lldb.eInstructionControlFlowKindCall,
         lldb.eInstructionControlFlowKindJump,
         lldb.eInstructionControlFlowKindCondJump,
         lldb.eInstructionControlFlowKindFarJump,
     )
     return kind
-
-def _is_branch_or_call_mnemonic(mnemonic, arch):
-    m = mnemonic.lower()
-
-    x86_br = {
-        "call",
-        "jmp",
-        "ja", "jae", "jb", "jbe", "jc", "jcxz",
-        "je", "jz", "jne", "jnz",
-        "jg", "jge", "jl", "jle",
-        "jo", "jno", "js", "jns",
-        "jp", "jpe", "jnp", "jpo",
-        "jrcxz",
-    }
-
-    arm_br = {
-        "b", "bl", "bx", "blx",
-        "cbz", "cbnz", "tbz", "tbnz",
-        "beq", "bne", "bhs", "bcs", "blo", "bcc",
-        "bmi", "bpl", "bvs", "bvc",
-        "bhi", "bls", "bge", "blt", "bgt", "ble",
-        "braa", "brab", "blraa", "blrab",
-    }
-
-    rv_br = {
-        "jal", "jalr", "beq", "bne", "blt", "bge", "bltu", "bgeu",
-    }
-
-    if arch in ARCH_X86:
-        # Normalize x86 mnemonics: GetMnemonic() often returns AT&T suffixes (callq, jmpl)
-        # even if the flavor is Intel.
-        if m in ("calll", "callq"):
-            m = "call"
-        elif m in ("jmpl", "jmpq"):
-            m = "jmp"
-        return m in x86_br
-    elif arch in ARCH_ARM:
-        return m in arm_br
-    elif arch in ARCH_ARM64:
-        return m in arm_br
-    else:
-        return m in x86_br or m in arm_br or m in rv_br
-
 
 def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
     """
@@ -256,9 +226,9 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
         result_out.PutCString("DEBUG: is_branch_or_call_at_addr checking 0x%x" % addr_load)
 
     if not target or not target.IsValid():
-        return (False, None)
+        return False, None
 
-    arch = _get_arch_name(target)
+    arch = get_arch_name(target)
     if debug_mode and result_out:
         result_out.PutCString("DEBUG: is_branch_or_call_at_addr arch: %s" % arch)
 
@@ -266,27 +236,27 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
     # sb_addr = target.ResolveLoadAddress(addr_load)
     sb_addr = target.ResolveFileAddress(addr_load)
     if debug_mode and result_out:
-        result_out.PutCString("DEBUG: is_branch_or_call_at_addr sb_addr 0x%s" % str(sb_addr))
+        result_out.PutCString("DEBUG: is_branch_or_call_at_addr sb_addr %s" % str(sb_addr))
     if not sb_addr or not sb_addr.IsValid():
-        return (False, None)
+        return False, None
 
     # Read raw bytes from memory; this returns a Python bytes object on your build
     err = lldb.SBError()
     buf = target.ReadMemory(sb_addr, 32, err)  # 32 bytes is enough for one instruction
     if not err.Success() or not buf:
-        return (False, None)
+        return False, None
 
     inst_list = target.GetInstructions(sb_addr, buf)
     if inst_list.GetSize() == 0:
-        return (False, None)
+        return False, None
 
     inst = inst_list.GetInstructionAtIndex(0)
     if debug_mode and result_out:
         result_out.PutCString("DEBUG: is_branch_or_call_at_addr inst: %s" % inst)
     if not inst or not inst.IsValid():
-        return (False, None)
+        return False, None
 
-    controlFlowKind = inst.GetControlFlowKind(target);
+    controlFlowKind = inst.GetControlFlowKind(target)
     if debug_mode and result_out:
         kind_name_map = {
             lldb.eInstructionControlFlowKindUnknown: "Unknown",
@@ -298,13 +268,13 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
             lldb.eInstructionControlFlowKindFarReturn: "FarReturn",
             lldb.eInstructionControlFlowKindFarJump: "FarJump",
         }
-        result_out.PutCString("ControlFlowKind: %s" % kind_name_map.get(controlFlowKind, str(controlFlowKind)))
+        result_out.PutCString("DEBUG: %s" % kind_name_map.get(controlFlowKind, str(controlFlowKind)))
         mnemonic = inst.GetMnemonic(target)
         result_out.PutCString("mnemonic: %s" % mnemonic)
     # if not _is_branch_or_call_mnemonic(mnemonic, arch):
-    #     return (False, None)
-    if not _is_branch_or_call_kind(controlFlowKind):
-        return (False, None)
+    #     return False, None
+    if not is_branch_or_call_kind(controlFlowKind):
+        return False, None
 
     operands_str = inst.GetOperands(target)
     if debug_mode and result_out:
@@ -429,12 +399,12 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
             # Case 2: Absolute indirect "*0xb15a0" -> read memory at 0xb15a0
             elif expr.startswith("0x") or (len(expr) > 0 and expr[0].isdigit()) or expr.startswith("-"):
                 if debug_mode and result_out:
-                    result_out.PutCString("DEBUG: ATT syntax, absolute indirect: %s" % expr)
+                    result_out.PutCString("DEBUG: AT&T syntax, absolute indirect: %s" % expr)
                 indirect = True
                 try:
                     ptr_addr = int(expr, 0)
                     if debug_mode and result_out:
-                        result_out.PutCString("DEBUG: ATT syntax, absolute addr: 0x%x" % ptr_addr)
+                        result_out.PutCString("DEBUG: AT&T syntax, absolute addr: 0x%x" % ptr_addr)
                 except ValueError:
                     ptr_addr = None
 
@@ -443,7 +413,7 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
                 indirect = False
                 reg_name = expr.lstrip("%")
                 if debug_mode and result_out:
-                    result_out.PutCString("DEBUG: ATT syntax, direct register: %s" % reg_name)
+                    result_out.PutCString("DEBUG: AT&T syntax, direct register: %s" % reg_name)
                 val = _resolve_register_value(frame, reg_name)
                 if val is not None:
                     target_addr = val
@@ -474,7 +444,6 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
             sb_mem_addr = target.ResolveLoadAddress(ptr_addr)
             if debug_mode and result_out:
                 result_out.PutCString("DEBUG: Indirect, sb_mem_addr: %s" % str(sb_mem_addr))
-            # target_bytes = target.ReadMemory(target.ResolveLoadAddress(ptr_addr), target_addr_size, err)
             target_bytes = target.ReadMemory(sb_mem_addr, target_addr_size, err)
             if debug_mode and result_out:
                 result_out.PutCString("DEBUG: Indirect, target_bytes: %s" % target_bytes)
@@ -526,8 +495,7 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
             pc = inst_addr.GetLoadAddress(target)
             if arch in ARCH_X86:
                 try:
-                    # target_addr = x86_cond_jump_target_from_inst(target, inst)
-                    target_addr = op_full
+                    target_addr = x86_cond_jump_target_from_inst(target, inst)
                     if debug_mode and result_out:
                         result_out.PutCString("target_addr: %s" % hex(target_addr))
                 except ValueError:
@@ -545,11 +513,10 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
 
     return (True, target_addr)
 
-
-def cmd_is_branch_or_call(debugger, command, exe_ctx, result, internal_dict):
+def branch_call_follow(debugger, command, exe_ctx, result, internal_dict, USAGE_STR):
     """
     Usage:
-      is_branch_or_call <address>
+      cmd <address> [debug]
     """
     global debug_mode
     target = exe_ctx.target
@@ -560,12 +527,12 @@ def cmd_is_branch_or_call(debugger, command, exe_ctx, result, internal_dict):
 
     cmd = command.strip()
     if not cmd:
-        result.PutCString("Usage: is_branch_or_call <address>")
+        result.PutCString(USAGE_STR)
         return
 
     cmd_args = command.strip().split()
     if len(cmd_args) < 1:
-        result.PutCString("Usage: is_branch_or_call <address> [debug]")
+        result.PutCString(USAGE_STR)
         return
 
     try:
@@ -579,11 +546,21 @@ def cmd_is_branch_or_call(debugger, command, exe_ctx, result, internal_dict):
     if debug_mode:
         result.PutCString("=== DEBUG: Analyzing 0x%x ===" % addr)
         result.PutCString("Disassembly flavor = %s" % current_flavor)
-        result.PutCString("Arch: %s" % _get_arch_name(target))
+        result.PutCString("Arch: %s" % get_arch_name(target))
         result.PutCString("Frame valid: %s" % frame.IsValid())
         result.PutCString("Target: %s" % str(target))
 
     is_br, tgt = is_branch_or_call_at_addr(target, addr, frame, result)
+    return is_br, addr, tgt
+
+def cmd_is_branch_or_call(debugger, command, exe_ctx, result, internal_dict):
+    """
+    Usage:
+      is_branch_or_call <address> [debug]
+    """
+
+    is_br, addr, tgt = branch_call_follow(debugger, command, exe_ctx, result, internal_dict,
+                       "is_branch_or_call <address> [debug]")
 
     if debug_mode:
         result.PutCString("Raw result: is_branch=%s, target=%s" % (is_br, hex(tgt) if tgt else "None"))
@@ -599,3 +576,44 @@ def cmd_is_branch_or_call(debugger, command, exe_ctx, result, internal_dict):
         result.PutCString(
             "Instruction at 0x%x IS a branch/call; target = 0x%x." % (addr, tgt)
         )
+
+def cmd_follow(debugger, command, exe_ctx, result, internal_dict):
+    """
+    Usage:
+      is_branch_or_call <address> [debug]
+    """
+    is_br, addr, tgt = branch_call_follow(debugger, command, exe_ctx, result, internal_dict,
+                                          "Usage: follow <address> [debug]")
+
+    if debug_mode:
+        result.PutCString("Raw result: is_branch=%s, target=%s" % (is_br, hex(tgt) if tgt else "None"))
+
+    if not is_br:
+        result.PutCString("Instruction at 0x%x is NOT a branch/call." % addr)
+    elif tgt is None:
+        result.PutCString(
+            "Instruction at 0x%x IS a branch/call, but target could not be resolved."
+            % addr
+        )
+    else:
+        di_sent = False
+
+        ci = debugger.GetCommandInterpreter()
+        cmd_line = f"di -s 0x{addr:x} -c 1"
+        res = lldb.SBCommandReturnObject()
+        ci.HandleCommand(cmd_line, res)
+        if res.Succeeded():
+            result.PutCString("Following %s" % hex(tgt))
+            di_sent = True
+
+        if res.GetError():
+            result.PutCString("DEBUG: di error: " + res.GetError())
+
+        if di_sent:
+            cmd_line = f"di -s 0x{tgt:x}"
+            ci.HandleCommand(cmd_line, res)
+            # result.PutCString(f"DEBUG: ran: {cmd_line}")
+            if res.GetOutput():
+                result.PutCString(res.GetOutput())
+            if res.GetError():
+                result.PutCString("DEBUG: di error: " + res.GetError())
