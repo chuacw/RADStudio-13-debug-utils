@@ -8,6 +8,7 @@
 # memory read --size 4 --format x 0xaa214 -c 1
 
 import lldb
+import os
 
 debug_mode = False
 
@@ -26,6 +27,7 @@ def load_command(debugger, func_name, cmd_name):
 def __lldb_init_module(debugger, internal_dict):
     load_command(debugger, "cmd_is_branch_or_call", "is_branch_or_call")
     load_command(debugger, "cmd_follow", "follow")
+    print(f'lldb pid is: {os.getpid()}')
 
 def get_x86_flavor(debugger):
     # This returns an SBStructuredData containing the setting info
@@ -95,8 +97,8 @@ def _resolve_register_value(frame, reg_name, result_out=None):
 
     return None
 
-def _is_branch_or_call_kind(controlFlowKind):
-    kind = controlFlowKind in (
+def _is_branch_or_call_kind(control_flow_kind):
+    kind = control_flow_kind in (
         lldb.eInstructionControlFlowKindCall,
         lldb.eInstructionControlFlowKindJump,
         lldb.eInstructionControlFlowKindCondJump,
@@ -120,7 +122,7 @@ def is_branch_or_call_at_addr(target, addr_load, flavor, frame=None, result_out=
         result_out.PutCString("Disassembly flavor: %s" % flavor)
 
     if not target or not target.IsValid():
-        return (False, None)
+        return False, None
 
     arch = _get_arch_name(target)
     if debug_mode and result_out:
@@ -131,25 +133,25 @@ def is_branch_or_call_at_addr(target, addr_load, flavor, frame=None, result_out=
     if debug_mode and result_out:
         result_out.PutCString("DEBUG: is_branch_or_call_at_addr sb_addr %s" % str(sb_addr))
     if not sb_addr or not sb_addr.IsValid():
-        return (False, None)
+        return False, None
 
     # Read raw bytes from memory; this returns a Python bytes object on your build
     err = lldb.SBError()
     buf = target.ReadMemory(sb_addr, 32, err)  # 32 bytes is enough for one instruction
     if not err.Success() or not buf:
-        return (False, None)
+        return False, None
 
     inst_list = target.GetInstructions(sb_addr, buf)
     if inst_list.GetSize() == 0:
-        return (False, None)
+        return False, None
 
     inst = inst_list.GetInstructionAtIndex(0)
     if debug_mode and result_out:
         result_out.PutCString("DEBUG: is_branch_or_call_at_addr inst: %s" % inst)
     if not inst or not inst.IsValid():
-        return (False, None)
+        return False, None
 
-    controlFlowKind = inst.GetControlFlowKind(target)
+    control_flow_kind = inst.GetControlFlowKind(target)
     if debug_mode and result_out:
         kind_name_map = {
             lldb.eInstructionControlFlowKindUnknown: "Unknown",
@@ -161,13 +163,13 @@ def is_branch_or_call_at_addr(target, addr_load, flavor, frame=None, result_out=
             lldb.eInstructionControlFlowKindFarReturn: "FarReturn",
             lldb.eInstructionControlFlowKindFarJump: "FarJump",
         }
-        result_out.PutCString("ControlFlowKind: %s" % kind_name_map.get(controlFlowKind, str(controlFlowKind)))
+        result_out.PutCString("ControlFlowKind: %s" % kind_name_map.get(control_flow_kind, str(control_flow_kind)))
         mnemonic = inst.GetMnemonic(target)
         result_out.PutCString("mnemonic: %s" % mnemonic)
     # if not _is_branch_or_call_mnemonic(mnemonic, arch):
     #     return (False, None)
-    if not _is_branch_or_call_kind(controlFlowKind):
-        return (False, None)
+    if not _is_branch_or_call_kind(control_flow_kind):
+        return False, None
 
     operands_str = inst.GetOperands(target)
     if debug_mode and result_out:
@@ -175,7 +177,7 @@ def is_branch_or_call_at_addr(target, addr_load, flavor, frame=None, result_out=
     tokens = operands_str.replace(",", " ").split()
     if not tokens:
         # Branch/call with no parsable operands
-        return (True, None)
+        return True, None
 		
     # Full operand string (for x86 "[edx]" or "dword ptr [edx]",
     # ARM/ARM64 "r3", "x4", etc.)
@@ -417,7 +419,7 @@ def is_branch_or_call_at_addr(target, addr_load, flavor, frame=None, result_out=
         if val is not None:
             target_addr = val
 
-    return (True, target_addr)
+    return True, target_addr
 
 def cmd_is_branch_or_call(debugger, command, exe_ctx, result, internal_dict):
     """
@@ -546,3 +548,5 @@ def cmd_follow(debugger, command, exe_ctx, result, internal_dict):
                 result.PutCString(res.GetOutput())
             if res.GetError():
                 result.PutCString("DEBUG: di error: " + res.GetError())
+    elif not is_br:
+        result.PutCString("Instruction at 0x%x is NOT a branch/call." % addr)
