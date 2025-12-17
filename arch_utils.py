@@ -10,6 +10,7 @@
 
 import lldb
 import os
+import re
 
 debug_mode = False
 
@@ -28,14 +29,10 @@ def load_command(debugger, func_name, cmd_name):
 def __lldb_init_module(debugger, internal_dict):
     load_command(debugger, "cmd_is_branch_or_call", "is_branch_or_call")
     load_command(debugger, "cmd_follow", "follow")
+    load_command(debugger, "cmd_get_operands", "get_operands")
     print(f'lldb pid is: {os.getpid()}')
 
 def get_x86_flavor(debugger):
-    # This returns an SBStructuredData containing the setting info
-    # But usually, it's easier to just run the command and parse output
-    # or look it up via the command interpreter's "GetSetting" mechanism.
-
-    # Method A: Using HandleCommand (simplest for text output)
     res = lldb.SBCommandReturnObject()
     debugger.GetCommandInterpreter().HandleCommand("settings show target.x86-disassembly-flavor", res)
     if res.Succeeded():
@@ -50,12 +47,35 @@ def get_arch_name(target):
     triple = target.GetTriple()
     return triple.split("-")[0].lower() if triple else ""
 
+# Accepts: 123, -42, 0x1a2b, -0XFF, $1A2B, -$FF
+_INT_DEC_RE = re.compile(r"^[+-]?\d+$")
+_INT_HEX_C_RE = re.compile(r"^[+-]?0[xX][0-9a-fA-F]+$")
+_INT_HEX_DELPHI_RE = re.compile(r"^[+-]?\$[0-9a-fA-F]+$")
+
 def is_int_literal(s: str) -> bool:
-    try:
-        int(s.strip(), 0)  # base=0 accepts 0x.., 0b.., 0o.., or decimal
-        return True
-    except ValueError:
+    if s is None:
         return False
+    t = s.strip()
+    return bool(
+        _INT_DEC_RE.match(t) or _INT_HEX_C_RE.match(t) or _INT_HEX_DELPHI_RE.match(t)
+    )
+
+def parse_int_literal(s: str):
+    """Parse decimal, 0x-hex, or Delphi $-hex into int; returns None on failure."""
+    if s is None:
+        return None
+    t = s.strip()
+    if _INT_DEC_RE.match(t):
+        return int(t, 10)
+    if _INT_HEX_C_RE.match(t):
+        return int(t, 16)
+    if _INT_HEX_DELPHI_RE.match(t):
+        sign = -1 if t.startswith('-') else 1
+        # remove leading sign and leading '$'
+        body = t.lstrip('+-')
+        assert body.startswith('$')
+        return sign * int(body[1:], 16)
+    return None
 
 def x86_cond_jump_target_from_inst(target: lldb.SBTarget,
                                   inst: lldb.SBInstruction,
@@ -132,16 +152,20 @@ def cmd_get_operands(debugger, command, exe_ctx, result, internal_dict):
         return
 
     cmd = command.strip()
+    USAGE_STR = "Usage: get_operands <address> [debug]"
     if not cmd:
-        result.PutCString("Usage: get_operands <address>")
+        result.PutCString(USAGE_STR)
         return
     cmd_args = command.strip().split()
     if len(cmd_args) < 1:
-        result.PutCString("Usage: get_operands <address> [debug]")
+        result.PutCString(USAGE_STR)
         return
     debug_mode = len(cmd_args) > 1 and cmd_args[1] == "debug"
 
-    addr = int(cmd_args[0], 0)
+    addr = parse_int_literal(cmd_args[0])
+    if addr is None:
+        result.PutCString("Invalid address: %s" % cmd_args[0])
+        return
     sb_addr = target.ResolveFileAddress(addr)
     # Read raw bytes from memory; this returns a Python bytes object on your build
     err = lldb.SBError()
@@ -192,10 +216,13 @@ def _resolve_register_value(frame, reg_name, result_out=None):
             if result_out:
                 result_out.PutCString("_resolve_register_value val: %s" % val)
             if val is not None:
+                if result_out:
+                    result_out.PutCString("_resolve_register_value if val is not None: val: %s" % val)
                 try:
+                    actual_value = parse_int_literal(val) # auto-detects hex/decimal
                     if result_out:
-                        result_out.PutCString("_resolve_register_value return: %s" % int(val, 0))
-                    return int(val, 0)  # auto-detects hex/decimal
+                        result_out.PutCString("_resolve_register_value return: %s" % actual_value)
+                    return actual_value
                 except (ValueError, TypeError):
                     continue
 
@@ -314,7 +341,9 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
 
             # Case A: Absolute address "[0x5c15a0]"
             try:
-                ptr_addr = int(inside, 0)
+                if debug_mode and result_out:
+                    result_out.PutCString("DEBUG: Intel syntax, inside: %s" % inside)
+                ptr_addr = parse_int_literal(inside)
                 if debug_mode and result_out:
                     result_out.PutCString("DEBUG: Intel syntax, absolute addr: 0x%x" % ptr_addr)
             except ValueError:
@@ -335,7 +364,7 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
                 else:
                     # Maybe the base is a number? (unlikely for Intel syntax usually [reg+off])
                     try:
-                        base_val = int(base_str, 0)
+                        base_val = parse_int_literal(base_str)
                     except ValueError:
                         base_val = None
 
@@ -346,7 +375,7 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
                         operator = parts[1].strip()
                         offset_str = parts[2].strip()
                         try:
-                            offset_val = int(offset_str, 0)
+                            offset_val = parse_int_literal(offset_str)
                             if operator == '+':
                                 ptr_addr += offset_val
                             elif operator == '-':
@@ -383,14 +412,16 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
                 if debug_mode and result_out:
                     result_out.PutCString("DEBUG: AT&T syntax, reg_name: %s, offset: %s" % (reg_name, offset_str))
 
-                base_val = _resolve_register_value(frame, reg_name)
+                base_val = _resolve_register_value(frame, reg_name, result_out)
+                if debug_mode and result_out:
+                    result_out.PutCString("Result after calling _resolve_register_value, value: %s" % (base_val if base_val is not None else "None"))
                 if base_val is not None:
                     ptr_addr = base_val
                     if debug_mode and result_out:
                         result_out.PutCString("DEBUG: AT&T syntax, reg_name: %s, value: %s" % (reg_name, hex(ptr_addr)))
                     if offset_str:
                         try:
-                            offset_val = int(offset_str, 0)
+                            offset_val = parse_int_literal(offset_str)
                             ptr_addr += offset_val
                         except ValueError:
                             ptr_addr = None
@@ -401,7 +432,7 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
                     result_out.PutCString("DEBUG: AT&T syntax, absolute indirect: %s" % expr)
                 indirect = True
                 try:
-                    ptr_addr = int(expr, 0)
+                    ptr_addr = parse_int_literal(expr)
                     if debug_mode and result_out:
                         result_out.PutCString("DEBUG: AT&T syntax, absolute addr: 0x%x" % ptr_addr)
                 except ValueError:
@@ -468,7 +499,7 @@ def is_branch_or_call_at_addr(target, addr_load, frame=None, result_out=None):
         if debug_mode and result_out:
             result_out.PutCString("Handling case 2)")
         try:
-            target_addr = int(cand, 16)
+            target_addr = parse_int_literal(cand)
         except ValueError:
             target_addr = None
 			
@@ -535,7 +566,7 @@ def branch_call_follow(debugger, command, exe_ctx, result, internal_dict, USAGE_
         return
 
     try:
-        addr = int(cmd_args[0], 0)
+        addr = parse_int_literal(cmd_args[0])
     except ValueError:
         result.PutCString("Invalid address: %s" % cmd_args[0])
         return
